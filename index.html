@@ -1180,6 +1180,81 @@ document.getElementById('sunRingHomeName').textContent = SKY_LOCATIONS.home.name
 tickSunRings();
 setInterval(tickSunRings, 30000); // real-time-ish, no need for per-second updates
 
+/* Quick honesty patch for the main card + "what you got today" box.
+   This is NOT the real Sky Engine (facts -> moments -> scoring ->
+   narration, see SupSky_Sky_Engine_Architecture.md) — that's a real
+   content-generation system, not built yet. This is a stopgap so the
+   card at least never contradicts what's actually happening outside:
+   it maps today's real Open-Meteo weather code to one of five honest
+   presets instead of leaving yesterday's Indore sample text up under a
+   real sky it no longer describes. */
+const SUN_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.4"/><path d="M12 2.5v2.6M12 18.9v2.6M4.2 4.2l1.9 1.9M17.9 17.9l1.9 1.9M2.5 12h2.6M18.9 12h2.6M4.2 19.8l1.9-1.9M17.9 6.1l1.9-1.9"/></svg>`;
+const CLOUD_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 14.5a3.7 3.7 0 0 1-1-7.27A5 5 0 0 1 15 5a4 4 0 0 1 2.7 6.9"/><path d="M6.5 14.5h10.2a3.3 3.3 0 0 0 0-6.6"/></svg>`;
+const RAIN_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 12.5a3.7 3.7 0 0 1-1-7.27A5 5 0 0 1 15 3a4 4 0 0 1 2.7 6.9"/><path d="M8 16l-1.2 2.6M13 16l-1.2 2.6M18 16l-1.2 2.6"/></svg>`;
+const SNOW_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 7l14 10M19 7L5 17"/></svg>`;
+
+function weatherCategory(code){
+  if (code === 0 || code === 1) return 'sunny';
+  if (code === 2 || code === 3 || code === 45 || code === 48) return 'cloudy';
+  if ([95,96,99].includes(code)) return 'storm';
+  if ([71,73,75,77,85,86].includes(code)) return 'snow';
+  if ([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) return 'rain';
+  return 'cloudy'; // unknown code — safer to undersell than to invent sun
+}
+
+function applyHonestToday(code, precipMm, snowCm){
+  const cat = weatherCategory(code);
+  const loc = SKY_LOCATIONS.home;
+  const today = sunTimesForDate(new Date(), loc.lat, loc.lon, loc.tz);
+  const daylightHrs = (today.sunrise && today.sunset)
+    ? (today.sunset - today.sunrise) / 3600000
+    : 12; // fallback if polar day/night math returns null — see PRODUCT_NOTES
+
+  const heroEl = document.querySelector('.hero-line');
+  const explainEl = document.querySelector('.small-explanation');
+  const wordEl = document.querySelector('.wgt-word');
+  const iconEl = document.querySelector('.wgt-card .wgt-icon');
+  const mmEl = document.querySelector('.wgt-stat-mm');
+  const lEl = document.querySelector('.wgt-stat-l');
+  const detailsFirstRow = document.querySelector('.wgt-details-panel .wgt-details-row span:last-child');
+  if (!heroEl) return;
+
+  if (cat === 'sunny' || cat === 'cloudy'){
+    const peakFraction = cat === 'sunny' ? 0.55 : 0.22; // real-world peak-sun-hour fractions of daylight, clear vs. overcast
+    const sunHrs = daylightHrs * peakFraction;
+    const kWh = sunHrs * 3 * 0.75; // 3kW typical home setup x 0.75 performance ratio, same disclosed assumption as before
+    heroEl.textContent = cat === 'sunny' ? 'A clear, sunny day' : 'A soft, overcast day';
+    explainEl.textContent = cat === 'sunny'
+      ? 'Barely a cloud today — real, strong sun for most of the daylight hours.'
+      : 'Clouds held most of the light back today — still real daylight, just gentler than a clear sky.';
+    wordEl.textContent = 'Sun';
+    if (iconEl) iconEl.innerHTML = SUN_ICON_SVG;
+    mmEl.textContent = sunHrs.toFixed(1) + ' hrs';
+    lEl.textContent = kWh.toFixed(1) + ' kWh';
+    if (detailsFirstRow) detailsFirstRow.textContent = Math.round(kWh * 83) + ' phone charges.';
+  } else if (cat === 'rain' || cat === 'storm'){
+    const roofM2 = 100; // disclosed assumption, same pattern as the solar setup size
+    const liters = precipMm * roofM2;
+    heroEl.textContent = cat === 'storm' ? 'A stormy day' : 'A rainy day';
+    explainEl.textContent = cat === 'storm'
+      ? 'Real weather making itself known today — not just background noise.'
+      : 'Real rain today — the ground actually needed it.';
+    wordEl.textContent = 'Rain';
+    if (iconEl) iconEl.innerHTML = RAIN_ICON_SVG;
+    mmEl.textContent = precipMm.toFixed(1) + ' mm';
+    lEl.textContent = Math.round(liters).toLocaleString() + ' L';
+    if (detailsFirstRow) detailsFirstRow.textContent = 'Estimated for a 100 m² rooftop catchment area.';
+  } else if (cat === 'snow'){
+    heroEl.textContent = 'A snowy day';
+    explainEl.textContent = 'Snow today — a different, quieter kind of weather than rain.';
+    wordEl.textContent = 'Snow';
+    if (iconEl) iconEl.innerHTML = SNOW_ICON_SVG;
+    mmEl.textContent = snowCm.toFixed(1) + ' cm';
+    lEl.textContent = 'fresh snow';
+    if (detailsFirstRow) detailsFirstRow.textContent = 'Real snowfall total for today, so far.';
+  }
+}
+
 /* Real location + real weather. Indore above was a fixed stand-in so the
    page always had something to render; this replaces it with wherever
    the phone actually is, the moment the browser's geolocation permission
@@ -1209,7 +1284,7 @@ function detectRealLocationAndWeather(){
     }
 
     try {
-      const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=weather_code`);
+      const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=weather_code&daily=precipitation_sum,snowfall_sum&timezone=auto`);
       const w = await wRes.json();
       const code = w.current && w.current.weather_code;
       // Open-Meteo weather codes 45/48 = fog / depositing rime fog — the
@@ -1220,14 +1295,22 @@ function detectRealLocationAndWeather(){
         mistPresent = realMist;
         refreshMistEffects();
       }
+      const precipToday = (w.daily && w.daily.precipitation_sum && w.daily.precipitation_sum[0]) || 0;
+      const snowToday = (w.daily && w.daily.snowfall_sum && w.daily.snowfall_sum[0]) || 0;
+      applyHonestToday(code, precipToday, snowToday);
     } catch(e){
-      // Weather fetch failed — leave mistPresent at its fallback value
-      // rather than guessing.
+      // Weather fetch failed — leave the card/utility box on their
+      // fallback sample content rather than guessing.
     }
   }, function(){
     // Permission denied or unavailable — stay on the Indore fallback,
     // don't ask again, don't block anything.
-  }, { timeout: 8000, maximumAge: 10 * 60 * 1000 });
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+  // enableHighAccuracy asks the phone to use GPS instead of coarse
+  // network/cell-tower positioning (which is what put Ankit ~25km off).
+  // maximumAge: 0 forces a fresh fix instead of reusing a stale cached
+  // one. Costs a little more time and battery per load — worth it for
+  // something people expect to be genuinely accurate about their sky.
 }
 detectRealLocationAndWeather();
 
