@@ -946,16 +946,16 @@ const LETTER_VARIANTS = {
     night:     "Today was a soft, grey kind of day — the sun never quite broke through, but it tried.",
   },
   rain: {
-    morning:   "Rain's moving through this morning — the kind that things have actually been waiting for.",
-    afternoon: "It's raining right now — real rain, not just a forecast.",
-    evening:   "Rain came through today — the ground took all of it in.",
-    night:     "It rained today. Somewhere nearby, something that's been waiting a while just got what it needed.",
+    morning:   "Rain's showing up in the readings for your area this morning — worth a glance outside, weather this local can shift street to street.",
+    afternoon: "Rain's in the readings for your area right now — check your own sky too, it may not have reached your exact spot yet.",
+    evening:   "Rain moved through your area today, by the readings — hope some of it found you.",
+    night:     "Rain showed up in your area's readings today. Somewhere nearby, something that's been waiting a while may have gotten what it needed.",
   },
   storm: {
-    morning:   "There's real weather moving in this morning — not background noise, the kind you notice.",
-    afternoon: "The sky's doing something loud right now — thunder, real rain, the whole thing.",
-    evening:   "The sky let go today — properly, not just a drizzle.",
-    night:     "Today the sky wasn't quiet about anything — thunder, heavy rain, the kind of day that gets remembered.",
+    morning:   "The readings show real weather moving into your area this morning — take a look outside, it's often more local than the map shows.",
+    afternoon: "Your area's readings say the sky's doing something loud right now — thunder, real rain. See if it's reached you yet.",
+    evening:   "The sky let go over your area today, by the readings — properly, not just a drizzle.",
+    night:     "Today your area's readings weren't quiet about anything — thunder, heavy rain. Hope it found you and not just the map.",
   },
   snow: {
     morning:   "Snow's falling this morning — everything outside is a little quieter for it.",
@@ -1291,7 +1291,12 @@ function weatherCategory(code, precipNowMm){
   // Only call it storm/rain if there's real current precipitation to
   // back it up — otherwise fall back to cloudy, which is always true
   // when it's not clear and nothing's actually falling.
-  const reallyPrecipitating = (precipNowMm || 0) > 0;
+  // Open-Meteo's "current" precipitation is a model estimate for the
+  // nearest grid cell (several km wide), not a rain gauge at your exact
+  // spot — trace values like 0.05mm can show up in the model even when
+  // nothing is actually falling where you stand. Require a real amount
+  // before calling it rain/storm, not just a nonzero number.
+  const reallyPrecipitating = (precipNowMm || 0) >= 0.3;
   if ([95,96,99].includes(code)) return reallyPrecipitating ? 'storm' : 'cloudy';
   if ([71,73,75,77,85,86].includes(code)) return reallyPrecipitating ? 'snow' : 'cloudy';
   if ([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) return reallyPrecipitating ? 'rain' : 'cloudy';
@@ -1346,10 +1351,10 @@ function applyHonestToday(code, precipNowMm, precipTodayMm, snowCm){
     // include rain that's forecast for later hours, which would let this
     // claim rain that hasn't actually fallen yet.
     const liters = precipNowMm * roofM2;
-    heroEl.textContent = cat === 'storm' ? 'The sky wasn’t quiet today' : 'Real rain today';
+    heroEl.textContent = cat === 'storm' ? 'The sky wasn’t quiet today' : 'Rain reached your area today';
     explainEl.textContent = cat === 'storm'
-      ? 'Thunder and real rain — the kind of day you notice, not just read about.'
-      : 'Not a forecast — this actually came down, and something nearby needed it.';
+      ? 'Thunder and rain in the readings for your area — check your own sky too, weather here can be very local.'
+      : 'Rain showed up in the readings for your area — weather can be very local, so your exact spot may differ.';
     wordEl.textContent = 'Rain';
     if (iconEl) iconEl.innerHTML = RAIN_ICON_SVG;
     mmEl.textContent = precipNowMm.toFixed(1) + ' mm';
