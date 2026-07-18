@@ -371,15 +371,23 @@
      (mistPresent) AND the letter's already been read. Never shows on a
      clear day, never shows before the letter's opened. Sits above the
      envelope, below the open letter. */
+  /* Fixed-size box centered over the envelope, with a radial mask that
+     fades it out at the edges instead of a hard rectangular overflow
+     clip — the old version scaled the full particle art into a tiny
+     120x78 box and hard-cropped it, which is why it looked cut off/
+     incomplete rather than like a soft wisp of cloud. */
   .envelope-cloud{
-    position:absolute; inset:-30% -20%; z-index:4;
+    position:absolute; left:50%; top:45%; transform:translate(-50%,-50%);
+    width:200px; height:200px; z-index:4;
     pointer-events:none; opacity:0; transition:opacity 1.3s ease;
-    overflow:hidden;
+    -webkit-mask-image: radial-gradient(circle, #000 38%, transparent 72%);
+    mask-image: radial-gradient(circle, #000 38%, transparent 72%);
   }
   .envelope-zone.cloud-over .envelope-cloud{ opacity:1; }
   .envelope-zone.open .envelope-cloud{ opacity:0; }
   .envelope-cloud img{
-    position:absolute; width:150%; left:-25%; top:30%;
+    position:absolute; inset:0; width:100%; height:100%;
+    object-fit: cover;
     opacity:0.6; filter:blur(0.5px);
   }
   .envelope-obj .body{
@@ -871,19 +879,52 @@ function todayKey(){
   return d.getFullYear() + '-' + (d.getMonth()+1) + '-' + d.getDate();
 }
 
-/* Letter is time-of-day aware: same underlying observation, different
-   tense depending on whether it's opened while the day's still ahead or
-   after it's already happened. Locked to whichever tense it's FIRST
-   opened in, so it can't flip mid-read or contradict itself if reopened
-   later — a letter that changed its story after you'd already read it
-   would feel dishonest, not clever. Comes back fresh (and re-locks)
-   tomorrow. Real app: these 4 strings are generated per-story by the
-   content engine, not hardcoded — this is the pattern, not the final copy. */
+/* Letter is time-of-day aware AND weather-aware: same real condition,
+   different tense depending on whether it's opened while the day's
+   still ahead or after it's already happened. Locked to whichever
+   tense+category it's FIRST opened in, so it can't flip mid-read or
+   contradict itself if reopened later. Comes back fresh (and re-locks)
+   tomorrow.
+
+   This is still a stopgap, not the real Sky Engine (facts -> candidate
+   moments -> score -> narration, see SupSky_Sky_Engine_Architecture.md)
+   — that system would write a genuinely new, specific line every day.
+   These 20 lines (5 weather categories x 4 tenses) are hand-written
+   placeholders so the letter at least matches today's real weather
+   instead of describing "damp for weeks" on a clear day — deliberately
+   NOT flat weather-report phrasing (see PRODUCT_NOTES.md, "boring line"
+   feedback), but still a fixed set, not a generated one. */
 const LETTER_VARIANTS = {
-  morning:   "Your sky's been damp for weeks, but today it's finally letting up. Give it till afternoon — the mist clears, and you'll properly feel the sun again.",
-  afternoon: "Your sky's been damp for weeks — but right now, it's actually letting up. The mist is clearing as you read this. Step out and feel it.",
-  evening:   "Your sky's been damp for weeks. This afternoon it finally let up, and the sun came through properly for a while.",
-  night:     "Your sky finally breathed again today. After weeks of damp weather, this afternoon brought clear sunlight. I hope you got to feel it.",
+  sunny: {
+    morning:   "The sky's clear start to finish today — the kind of blue that makes the whole day feel a little more possible.",
+    afternoon: "Not a cloud in sight right now — this is about as open as the sky gets.",
+    evening:   "The sky stayed clear the whole day today, right through to this light.",
+    night:     "The sky stayed open all day today — that kind of clearness doesn't happen every day.",
+  },
+  cloudy: {
+    morning:   "Clouds are doing most of the talking today — the sun's still up there, just working through a crowd.",
+    afternoon: "The clouds haven't let much through today, but the light's still finding its way in, softer than usual.",
+    evening:   "The sun spent today behind a curtain of cloud — quieter light, the whole day through.",
+    night:     "Today was a soft, grey kind of day — the sun never quite broke through, but it tried.",
+  },
+  rain: {
+    morning:   "Rain's moving through this morning — the kind that things have actually been waiting for.",
+    afternoon: "It's raining right now — real rain, not just a forecast.",
+    evening:   "Rain came through today — the ground took all of it in.",
+    night:     "It rained today. Somewhere nearby, something that's been waiting a while just got what it needed.",
+  },
+  storm: {
+    morning:   "There's real weather moving in this morning — not background noise, the kind you notice.",
+    afternoon: "The sky's doing something loud right now — thunder, real rain, the whole thing.",
+    evening:   "The sky let go today — properly, not just a drizzle.",
+    night:     "Today the sky wasn't quiet about anything — thunder, heavy rain, the kind of day that gets remembered.",
+  },
+  snow: {
+    morning:   "Snow's falling this morning — everything outside is a little quieter for it.",
+    afternoon: "It's snowing right now — the world outside just got a bit more hushed.",
+    evening:   "Snow came down today — the kind that changes how everything looks by evening.",
+    night:     "It snowed today. Everything outside is holding onto that quiet a little longer tonight.",
+  },
 };
 const LETTER_VARIANT_KEY = 'supsky_letter_variant';
 function hourBucket(d){
@@ -896,15 +937,16 @@ function hourBucket(d){
 function lockedLetterVariant(){
   let stored = null;
   try { stored = JSON.parse(localStorage.getItem(LETTER_VARIANT_KEY) || 'null'); } catch(e){}
-  if (stored && stored.date === todayKey()) return stored.variant;
-  const variant = hourBucket(new Date());
-  try { localStorage.setItem(LETTER_VARIANT_KEY, JSON.stringify({date: todayKey(), variant})); } catch(e){}
-  return variant;
+  if (stored && stored.date === todayKey()) return stored;
+  const locked = { date: todayKey(), tense: hourBucket(new Date()), category: currentWeatherCategory || 'cloudy' };
+  try { localStorage.setItem(LETTER_VARIANT_KEY, JSON.stringify(locked)); } catch(e){}
+  return locked;
 }
 function renderLetterText(){
   const el = document.getElementById('letterText');
   if (!el) return;
-  el.textContent = LETTER_VARIANTS[lockedLetterVariant()];
+  const { tense, category } = lockedLetterVariant();
+  el.textContent = LETTER_VARIANTS[category][tense];
 }
 // Only drape a particle over the settled envelope when today's real sky
 // actually has particles running (mistPresent) — same honesty rule as
@@ -1202,8 +1244,11 @@ function weatherCategory(code){
   return 'cloudy'; // unknown code — safer to undersell than to invent sun
 }
 
+let currentWeatherCategory = null; // set below once real weather resolves; letter uses this too
+
 function applyHonestToday(code, precipMm, snowCm){
   const cat = weatherCategory(code);
+  currentWeatherCategory = cat;
   const loc = SKY_LOCATIONS.home;
   const today = sunTimesForDate(new Date(), loc.lat, loc.lon, loc.tz);
   const daylightHrs = (today.sunrise && today.sunset)
@@ -1223,10 +1268,10 @@ function applyHonestToday(code, precipMm, snowCm){
     const peakFraction = cat === 'sunny' ? 0.55 : 0.22; // real-world peak-sun-hour fractions of daylight, clear vs. overcast
     const sunHrs = daylightHrs * peakFraction;
     const kWh = sunHrs * 3 * 0.75; // 3kW typical home setup x 0.75 performance ratio, same disclosed assumption as before
-    heroEl.textContent = cat === 'sunny' ? 'A clear, sunny day' : 'A soft, overcast day';
+    heroEl.textContent = cat === 'sunny' ? 'Wide open sky today' : 'Soft light, most of the day';
     explainEl.textContent = cat === 'sunny'
-      ? 'Barely a cloud today — real, strong sun for most of the daylight hours.'
-      : 'Clouds held most of the light back today — still real daylight, just gentler than a clear sky.';
+      ? 'Barely a cloud between you and direct sun, most of the daylight hours.'
+      : 'The sun stayed behind cloud today — daylight’s still real, just gentler than usual.';
     wordEl.textContent = 'Sun';
     if (iconEl) iconEl.innerHTML = SUN_ICON_SVG;
     mmEl.textContent = sunHrs.toFixed(1) + ' hrs';
@@ -1235,18 +1280,18 @@ function applyHonestToday(code, precipMm, snowCm){
   } else if (cat === 'rain' || cat === 'storm'){
     const roofM2 = 100; // disclosed assumption, same pattern as the solar setup size
     const liters = precipMm * roofM2;
-    heroEl.textContent = cat === 'storm' ? 'A stormy day' : 'A rainy day';
+    heroEl.textContent = cat === 'storm' ? 'The sky wasn’t quiet today' : 'Real rain today';
     explainEl.textContent = cat === 'storm'
-      ? 'Real weather making itself known today — not just background noise.'
-      : 'Real rain today — the ground actually needed it.';
+      ? 'Thunder and real rain — the kind of day you notice, not just read about.'
+      : 'Not a forecast — this actually came down, and something nearby needed it.';
     wordEl.textContent = 'Rain';
     if (iconEl) iconEl.innerHTML = RAIN_ICON_SVG;
     mmEl.textContent = precipMm.toFixed(1) + ' mm';
     lEl.textContent = Math.round(liters).toLocaleString() + ' L';
     if (detailsFirstRow) detailsFirstRow.textContent = 'Estimated for a 100 m² rooftop catchment area.';
   } else if (cat === 'snow'){
-    heroEl.textContent = 'A snowy day';
-    explainEl.textContent = 'Snow today — a different, quieter kind of weather than rain.';
+    heroEl.textContent = 'Snow settled in today';
+    explainEl.textContent = 'A quieter, softer kind of weather than rain — everything a little muffled.';
     wordEl.textContent = 'Snow';
     if (iconEl) iconEl.innerHTML = SNOW_ICON_SVG;
     mmEl.textContent = snowCm.toFixed(1) + ' cm';
@@ -1270,7 +1315,11 @@ function detectRealLocationAndWeather(){
     try {
       const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
       const geo = await geoRes.json();
-      const name = geo.city || geo.locality || geo.principalSubdivision || 'Your sky';
+      // Prefer the finest-grained real name available (village/locality)
+      // over "city", which for rural areas often resolves to the nearest
+      // town the geocoder actually has data for — sometimes tens of km
+      // away. That's what put Jaisinagar up instead of Khurai Thaori.
+      const name = geo.locality || geo.city || geo.principalSubdivision || 'Your sky';
       SKY_LOCATIONS.home = { name, lat, lon, tz };
       document.querySelector('.stamp .loc').textContent = geo.principalSubdivision ? `${name}, ${geo.principalSubdivision}` : name;
       document.getElementById('sunRingHomeName').textContent = name;
