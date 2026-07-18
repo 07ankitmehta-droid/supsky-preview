@@ -937,7 +937,16 @@ function hourBucket(d){
 function lockedLetterVariant(){
   let stored = null;
   try { stored = JSON.parse(localStorage.getItem(LETTER_VARIANT_KEY) || 'null'); } catch(e){}
-  if (stored && stored.date === todayKey()) return stored;
+  // Validate the stored shape before trusting it — an earlier version of
+  // this app stored {date, variant} instead of {date, tense, category}.
+  // Reusing that stale shape silently broke rendering (LETTER_VARIANTS
+  // [undefined][undefined] threw, so the letter element kept whatever
+  // static placeholder text was already in the HTML — this is why the
+  // letter looked stuck on the old "damp for weeks" line even after the
+  // rewrite). Falls through to generating a fresh, valid lock instead.
+  if (stored && stored.date === todayKey() && stored.tense && stored.category && LETTER_VARIANTS[stored.category] && LETTER_VARIANTS[stored.category][stored.tense]){
+    return stored;
+  }
   const locked = { date: todayKey(), tense: hourBucket(new Date()), category: currentWeatherCategory || 'cloudy' };
   try { localStorage.setItem(LETTER_VARIANT_KEY, JSON.stringify(locked)); } catch(e){}
   return locked;
@@ -946,7 +955,7 @@ function renderLetterText(){
   const el = document.getElementById('letterText');
   if (!el) return;
   const { tense, category } = lockedLetterVariant();
-  el.textContent = LETTER_VARIANTS[category][tense];
+  el.textContent = (LETTER_VARIANTS[category] && LETTER_VARIANTS[category][tense]) || LETTER_VARIANTS.cloudy[tense] || LETTER_VARIANTS.cloudy.afternoon;
 }
 // Only drape a particle over the settled envelope when today's real sky
 // actually has particles running (mistPresent) — same honesty rule as
@@ -1235,19 +1244,26 @@ const CLOUD_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 const RAIN_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 12.5a3.7 3.7 0 0 1-1-7.27A5 5 0 0 1 15 3a4 4 0 0 1 2.7 6.9"/><path d="M8 16l-1.2 2.6M13 16l-1.2 2.6M18 16l-1.2 2.6"/></svg>`;
 const SNOW_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 7l14 10M19 7L5 17"/></svg>`;
 
-function weatherCategory(code){
+function weatherCategory(code, precipNowMm){
   if (code === 0 || code === 1) return 'sunny';
   if (code === 2 || code === 3 || code === 45 || code === 48) return 'cloudy';
-  if ([95,96,99].includes(code)) return 'storm';
-  if ([71,73,75,77,85,86].includes(code)) return 'snow';
-  if ([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) return 'rain';
+  // Open-Meteo's weather_code can reflect the model's read on the hour
+  // even when nothing measurable is actually falling THIS moment (a real
+  // gap that produced Ankit's "no thunder but it says thunder" report).
+  // Only call it storm/rain if there's real current precipitation to
+  // back it up — otherwise fall back to cloudy, which is always true
+  // when it's not clear and nothing's actually falling.
+  const reallyPrecipitating = (precipNowMm || 0) > 0;
+  if ([95,96,99].includes(code)) return reallyPrecipitating ? 'storm' : 'cloudy';
+  if ([71,73,75,77,85,86].includes(code)) return reallyPrecipitating ? 'snow' : 'cloudy';
+  if ([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) return reallyPrecipitating ? 'rain' : 'cloudy';
   return 'cloudy'; // unknown code — safer to undersell than to invent sun
 }
 
 let currentWeatherCategory = null; // set below once real weather resolves; letter uses this too
 
-function applyHonestToday(code, precipMm, snowCm){
-  const cat = weatherCategory(code);
+function applyHonestToday(code, precipNowMm, precipTodayMm, snowCm){
+  const cat = weatherCategory(code, precipNowMm);
   currentWeatherCategory = cat;
   const loc = SKY_LOCATIONS.home;
   const today = sunTimesForDate(new Date(), loc.lat, loc.lon, loc.tz);
@@ -1261,7 +1277,13 @@ function applyHonestToday(code, precipMm, snowCm){
   const iconEl = document.querySelector('.wgt-card .wgt-icon');
   const mmEl = document.querySelector('.wgt-stat-mm');
   const lEl = document.querySelector('.wgt-stat-l');
-  const detailsFirstRow = document.querySelector('.wgt-details-panel .wgt-details-row span:last-child');
+  // All 4 details rows, not just the first — the first row is the only
+  // one this used to update, so a rain day still showed "135 hours of a
+  // ceiling fan" and "1,100 hours of LED light" underneath, numbers that
+  // only ever meant anything for the Sun category. That mismatch is
+  // exactly what looked like "wrong data" even though the top line was
+  // technically already fixed.
+  const detailsRows = document.querySelectorAll('.wgt-details-panel .wgt-details-row span:last-child');
   if (!heroEl) return;
 
   if (cat === 'sunny' || cat === 'cloudy'){
@@ -1276,19 +1298,28 @@ function applyHonestToday(code, precipMm, snowCm){
     if (iconEl) iconEl.innerHTML = SUN_ICON_SVG;
     mmEl.textContent = sunHrs.toFixed(1) + ' hrs';
     lEl.textContent = kWh.toFixed(1) + ' kWh';
-    if (detailsFirstRow) detailsFirstRow.textContent = Math.round(kWh * 83) + ' phone charges.';
+    if (detailsRows[0]) detailsRows[0].textContent = Math.round(kWh * 83) + ' phone charges.';
+    if (detailsRows[1]) detailsRows[1].textContent = Math.round(kWh * 13.3) + ' hours of a ceiling fan.';
+    if (detailsRows[2]) detailsRows[2].textContent = Math.round(kWh * 110) + ' hours of LED light.';
+    if (detailsRows[3]) detailsRows[3].textContent = 'Estimated for a typical 3kW home solar setup.';
   } else if (cat === 'rain' || cat === 'storm'){
     const roofM2 = 100; // disclosed assumption, same pattern as the solar setup size
-    const liters = precipMm * roofM2;
+    // "Right now" mm, not the day's forecast total — the day total can
+    // include rain that's forecast for later hours, which would let this
+    // claim rain that hasn't actually fallen yet.
+    const liters = precipNowMm * roofM2;
     heroEl.textContent = cat === 'storm' ? 'The sky wasn’t quiet today' : 'Real rain today';
     explainEl.textContent = cat === 'storm'
       ? 'Thunder and real rain — the kind of day you notice, not just read about.'
       : 'Not a forecast — this actually came down, and something nearby needed it.';
     wordEl.textContent = 'Rain';
     if (iconEl) iconEl.innerHTML = RAIN_ICON_SVG;
-    mmEl.textContent = precipMm.toFixed(1) + ' mm';
+    mmEl.textContent = precipNowMm.toFixed(1) + ' mm';
     lEl.textContent = Math.round(liters).toLocaleString() + ' L';
-    if (detailsFirstRow) detailsFirstRow.textContent = 'Estimated for a 100 m² rooftop catchment area.';
+    if (detailsRows[0]) detailsRows[0].textContent = 'Right now, this hour — not a forecast total.';
+    if (detailsRows[1]) detailsRows[1].textContent = precipTodayMm.toFixed(1) + ' mm forecast for the whole day.';
+    if (detailsRows[2]) detailsRows[2].textContent = Math.round(liters).toLocaleString() + ' liters collected so far, this hour.';
+    if (detailsRows[3]) detailsRows[3].textContent = 'Estimated for a 100 m² rooftop catchment area.';
   } else if (cat === 'snow'){
     heroEl.textContent = 'Snow settled in today';
     explainEl.textContent = 'A quieter, softer kind of weather than rain — everything a little muffled.';
@@ -1296,7 +1327,10 @@ function applyHonestToday(code, precipMm, snowCm){
     if (iconEl) iconEl.innerHTML = SNOW_ICON_SVG;
     mmEl.textContent = snowCm.toFixed(1) + ' cm';
     lEl.textContent = 'fresh snow';
-    if (detailsFirstRow) detailsFirstRow.textContent = 'Real snowfall total for today, so far.';
+    if (detailsRows[0]) detailsRows[0].textContent = 'Real snowfall total for today, so far.';
+    if (detailsRows[1]) detailsRows[1].textContent = 'A different kind of quiet than rain — sound travels less through fresh snow.';
+    if (detailsRows[2]) detailsRows[2].textContent = snowCm > 5 ? 'Enough to actually change how things look outside.' : 'A light dusting — not enough to settle for long.';
+    if (detailsRows[3]) detailsRows[3].textContent = 'Real snowfall total measured for today.';
   }
 }
 
@@ -1315,11 +1349,18 @@ function detectRealLocationAndWeather(){
     try {
       const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
       const geo = await geoRes.json();
-      // Prefer the finest-grained real name available (village/locality)
-      // over "city", which for rural areas often resolves to the nearest
-      // town the geocoder actually has data for — sometimes tens of km
-      // away. That's what put Jaisinagar up instead of Khurai Thaori.
-      const name = geo.locality || geo.city || geo.principalSubdivision || 'Your sky';
+      // Try to find the finest-grained real name the geocoder actually
+      // has, not just its top-level "city"/"locality" fields — for rural
+      // areas those often resolve to the nearest town it has data for
+      // (this is what put Jaisinagar up instead of Khurai Thaori). The
+      // administrative breakdown sometimes carries a finer village-level
+      // name even when the top-level fields don't. This is still a best
+      // effort against a free, no-signup geocoder — if it genuinely has
+      // no data finer than "Jaisinagar" for this spot, no amount of
+      // field-picking will invent a name it doesn't have.
+      const admin = geo.localityInfo && geo.localityInfo.administrative;
+      const finestAdmin = admin && admin.length ? admin[admin.length - 1].name : null;
+      const name = geo.locality || finestAdmin || geo.city || geo.principalSubdivision || 'Your sky';
       SKY_LOCATIONS.home = { name, lat, lon, tz };
       document.querySelector('.stamp .loc').textContent = geo.principalSubdivision ? `${name}, ${geo.principalSubdivision}` : name;
       document.getElementById('sunRingHomeName').textContent = name;
@@ -1333,7 +1374,7 @@ function detectRealLocationAndWeather(){
     }
 
     try {
-      const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=weather_code&daily=precipitation_sum,snowfall_sum&timezone=auto`);
+      const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=weather_code,precipitation&daily=precipitation_sum,snowfall_sum&timezone=auto`);
       const w = await wRes.json();
       const code = w.current && w.current.weather_code;
       // Open-Meteo weather codes 45/48 = fog / depositing rime fog — the
@@ -1344,9 +1385,15 @@ function detectRealLocationAndWeather(){
         mistPresent = realMist;
         refreshMistEffects();
       }
+      // current.precipitation is what's actually falling THIS hour —
+      // daily.precipitation_sum is the whole day's forecast total
+      // (including hours that haven't happened yet), which is why "no
+      // rain right now" could still show a rain number: it was quoting
+      // rain forecast for later today as if it had already fallen.
+      const precipNow = (w.current && w.current.precipitation) || 0;
       const precipToday = (w.daily && w.daily.precipitation_sum && w.daily.precipitation_sum[0]) || 0;
       const snowToday = (w.daily && w.daily.snowfall_sum && w.daily.snowfall_sum[0]) || 0;
-      applyHonestToday(code, precipToday, snowToday);
+      applyHonestToday(code, precipNow, precipToday, snowToday);
     } catch(e){
       // Weather fetch failed — leave the card/utility box on their
       // fallback sample content rather than guessing.
