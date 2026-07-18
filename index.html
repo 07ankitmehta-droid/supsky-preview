@@ -1389,22 +1389,33 @@ function detectRealLocationAndWeather(){
     setLiveStatus(`got GPS fix (±${Math.round(pos.coords.accuracy)}m) — looking up place name…`);
 
     try {
-      const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
-      const geo = await geoRes.json();
-      // Try to find the finest-grained real name the geocoder actually
-      // has, not just its top-level "city"/"locality" fields — for rural
-      // areas those often resolve to the nearest town it has data for
-      // (this is what put Jaisinagar up instead of Khurai Thaori). The
-      // administrative breakdown sometimes carries a finer village-level
-      // name even when the top-level fields don't. This is still a best
-      // effort against a free, no-signup geocoder — if it genuinely has
-      // no data finer than "Jaisinagar" for this spot, no amount of
-      // field-picking will invent a name it doesn't have.
-      const admin = geo.localityInfo && geo.localityInfo.administrative;
-      const finestAdmin = admin && admin.length ? admin[admin.length - 1].name : null;
-      const name = geo.locality || finestAdmin || geo.city || geo.principalSubdivision || 'Your sky';
+      // OpenStreetMap Nominatim first — no signup/key needed, and its data
+      // is crowd-mapped, so villages/hamlets in rural India are often
+      // named where commercial geocoders only know the nearest town.
+      // zoom=18 asks for building/village-level detail, not just city.
+      let name = null, subdivision = null;
+      try {
+        const osmRes = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&zoom=18&addressdetails=1&format=jsonv2`, {
+          headers: { 'Accept-Language': 'en' }
+        });
+        const osm = await osmRes.json();
+        const a = osm.address || {};
+        // Most-specific first: village/hamlet beat town/city for rural spots.
+        name = a.village || a.hamlet || a.locality || a.town || a.suburb || a.city_district || a.city || null;
+        subdivision = a.state_district || a.county || a.state || null;
+      } catch(eOsm){ /* fall through to BigDataCloud below */ }
+
+      if (!name){
+        const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+        const geo = await geoRes.json();
+        const admin = geo.localityInfo && geo.localityInfo.administrative;
+        const finestAdmin = admin && admin.length ? admin[admin.length - 1].name : null;
+        name = geo.locality || finestAdmin || geo.city || geo.principalSubdivision || 'Your sky';
+        subdivision = geo.principalSubdivision || null;
+      }
+
       SKY_LOCATIONS.home = { name, lat, lon, tz };
-      document.querySelector('.stamp .loc').textContent = geo.principalSubdivision ? `${name}, ${geo.principalSubdivision}` : name;
+      document.querySelector('.stamp .loc').textContent = subdivision ? `${name}, ${subdivision}` : name;
       document.getElementById('sunRingHomeName').textContent = name;
       tickSunRings();
       setLiveStatus(`location: ${name} — checking weather…`);
