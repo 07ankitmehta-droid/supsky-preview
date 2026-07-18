@@ -1341,16 +1341,17 @@ function applyHonestToday(code, precipNowMm, precipTodayMm, snowCm){
     if (iconEl) iconEl.innerHTML = SUN_ICON_SVG;
     mmEl.textContent = sunHrs.toFixed(1) + ' hrs';
     lEl.textContent = kWh.toFixed(1) + ' kWh';
-    if (detailsRows[0]) detailsRows[0].textContent = Math.round(kWh * 83) + ' phone charges.';
-    if (detailsRows[1]) detailsRows[1].textContent = Math.round(kWh * 13.3) + ' hours of a ceiling fan.';
-    if (detailsRows[2]) detailsRows[2].textContent = Math.round(kWh * 110) + ' hours of LED light.';
-    if (detailsRows[3]) detailsRows[3].textContent = 'Estimated for a typical 3kW home solar setup.';
+    if (detailsRows[0]) detailsRows[0].textContent = cat === 'sunny'
+      ? 'Good drying conditions today — grain, chilies, or washing would dry fast.'
+      : 'Drying will be slower than a clear day, but the light was still usable most of the day.';
+    if (detailsRows[1]) detailsRows[1].textContent = 'If you run solar panels: roughly ' + kWh.toFixed(1) + ' kWh today, for a typical 3kW setup.';
+    if (detailsRows[2]) detailsRows[2].textContent = 'About ' + Math.round(kWh * 83) + ' phone charges worth of that power.';
+    if (detailsRows[3]) detailsRows[3].textContent = 'Sun-hour and solar figures are estimates, not a measurement of your own panels or field.';
   } else if (cat === 'rain' || cat === 'storm'){
-    const roofM2 = 100; // disclosed assumption, same pattern as the solar setup size
-    // "Right now" mm, not the day's forecast total — the day total can
-    // include rain that's forecast for later hours, which would let this
-    // claim rain that hasn't actually fallen yet.
-    const liters = precipNowMm * roofM2;
+    // Field terms, not a rooftop tank — 1mm of rain over 1 acre is
+    // ~4,046.86 liters (1 acre = 4046.86 m², 1mm depth = 1 L/m²). That's
+    // a real, usable number for someone watching a field, not a house.
+    const litersPerAcre = precipNowMm * 4046.86;
     heroEl.textContent = cat === 'storm' ? 'The sky wasn’t quiet today' : 'Rain reached your area today';
     explainEl.textContent = cat === 'storm'
       ? 'Thunder and rain in the readings for your area — check your own sky too, weather here can be very local.'
@@ -1358,11 +1359,11 @@ function applyHonestToday(code, precipNowMm, precipTodayMm, snowCm){
     wordEl.textContent = 'Rain';
     if (iconEl) iconEl.innerHTML = RAIN_ICON_SVG;
     mmEl.textContent = precipNowMm.toFixed(1) + ' mm';
-    lEl.textContent = Math.round(liters).toLocaleString() + ' L';
+    lEl.textContent = Math.round(litersPerAcre).toLocaleString() + ' L/acre';
     if (detailsRows[0]) detailsRows[0].textContent = 'Right now, this hour — not a forecast total.';
     if (detailsRows[1]) detailsRows[1].textContent = precipTodayMm.toFixed(1) + ' mm forecast for the whole day.';
-    if (detailsRows[2]) detailsRows[2].textContent = Math.round(liters).toLocaleString() + ' liters collected so far, this hour.';
-    if (detailsRows[3]) detailsRows[3].textContent = 'Estimated for a 100 m² rooftop catchment area.';
+    if (detailsRows[2]) detailsRows[2].textContent = 'Roughly ' + Math.round(litersPerAcre).toLocaleString() + ' liters landed per acre of open field, this hour.';
+    if (detailsRows[3]) detailsRows[3].textContent = 'A rough field estimate, not a measurement of your own soil — how it fell (steady vs. sudden) changes how much actually soaks in.';
   } else if (cat === 'snow'){
     heroEl.textContent = 'Snow settled in today';
     explainEl.textContent = 'A quieter, softer kind of weather than rain — everything a little muffled.';
