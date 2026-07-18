@@ -525,8 +525,8 @@
 
 
   <div class="stamp">
-    17 July, Thursday
-    <span class="loc">Indore, Madhya Pradesh</span>
+    <span id="stampDate">17 July, Thursday</span>
+    <span class="loc" id="stampLoc">Indore, Madhya Pradesh</span>
   </div>
 
   <!-- MAIN CANVAS —
@@ -734,6 +734,44 @@
 </div>
 
 <script>
+/* Real calendar date — this was hardcoded static text ("17 July,
+   Thursday") in the HTML and never updated by JS at all, so it silently
+   went stale the moment the page was viewed on any day other than when
+   it was authored. Runs unconditionally on load, independent of
+   geolocation/weather, since the device's own clock is always available
+   and never needs permission. */
+function renderRealDate(){
+  const el = document.getElementById('stampDate');
+  if (!el) return;
+  const now = new Date();
+  const day = now.toLocaleDateString('en-US', { day: 'numeric' });
+  const month = now.toLocaleDateString('en-US', { month: 'long' });
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'long' });
+  el.textContent = `${day} ${month}, ${weekday}`;
+}
+renderRealDate();
+
+/* Visible status line for exactly what's happening with the real
+   location/weather detection — added because the previous silent-
+   failure design ("fails quietly back to the fallback") made it
+   impossible to tell, from a bug report alone, whether the code was
+   broken or the phone's geolocation/weather calls just weren't
+   succeeding. TEMPORARY — same pattern as the debug marker that helped
+   diagnose the sun ring earlier this project; remove once this is
+   confirmed working reliably on Ankit's actual phone. */
+function setLiveStatus(text){
+  let el = document.getElementById('liveStatus');
+  if (!el){
+    el = document.createElement('div');
+    el.id = 'liveStatus';
+    el.style.cssText = 'background:#222;color:#7CFC9A;font-family:monospace;font-weight:700;font-size:0.62rem;text-align:center;padding:5px;border-radius:8px;margin:0 0 8px;';
+    const screen = document.querySelector('.screen');
+    if (screen) screen.insertBefore(el, screen.firstChild);
+  }
+  el.textContent = text;
+}
+setLiveStatus('checking location permission…');
+
 /* Background progresses through 8 real stages across the day — the
    original 4 Ankit already liked (day/sunset/evening/night, unchanged)
    plus 4 new fill-in stages (morning/morning2/midday/afternoon) from his
@@ -1341,10 +1379,14 @@ function applyHonestToday(code, precipNowMm, precipTodayMm, snowCm){
    back to the Indore fallback on denial/timeout/offline — never blocks
    the page, never nags for permission twice. */
 function detectRealLocationAndWeather(){
-  if (!('geolocation' in navigator)) return;
+  if (!('geolocation' in navigator)){
+    setLiveStatus('this browser has no geolocation API');
+    return;
+  }
   navigator.geolocation.getCurrentPosition(async function(pos){
     const lat = pos.coords.latitude, lon = pos.coords.longitude;
     const tz = -new Date().getTimezoneOffset() / 60; // phone's own local UTC offset — correct regardless of detected place
+    setLiveStatus(`got GPS fix (±${Math.round(pos.coords.accuracy)}m) — looking up place name…`);
 
     try {
       const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
@@ -1365,12 +1407,14 @@ function detectRealLocationAndWeather(){
       document.querySelector('.stamp .loc').textContent = geo.principalSubdivision ? `${name}, ${geo.principalSubdivision}` : name;
       document.getElementById('sunRingHomeName').textContent = name;
       tickSunRings();
+      setLiveStatus(`location: ${name} — checking weather…`);
     } catch(e){
       // Reverse geocoding failed (offline, blocked) — still use the real
       // coordinates for the ring/sun math, just keep showing the old name
       // rather than nothing.
       SKY_LOCATIONS.home = { ...SKY_LOCATIONS.home, lat, lon, tz };
       tickSunRings();
+      setLiveStatus('place-name lookup failed (network?) — GPS coords still used for sun ring. checking weather…');
     }
 
     try {
@@ -1394,13 +1438,18 @@ function detectRealLocationAndWeather(){
       const precipToday = (w.daily && w.daily.precipitation_sum && w.daily.precipitation_sum[0]) || 0;
       const snowToday = (w.daily && w.daily.snowfall_sum && w.daily.snowfall_sum[0]) || 0;
       applyHonestToday(code, precipNow, precipToday, snowToday);
+      setLiveStatus(`live: ${SKY_LOCATIONS.home.name}, weather_code=${code}, category=${currentWeatherCategory} — working correctly`);
     } catch(e){
       // Weather fetch failed — leave the card/utility box on their
       // fallback sample content rather than guessing.
+      setLiveStatus('weather fetch failed (network/CORS?) — card still showing fallback content');
     }
-  }, function(){
+  }, function(err){
     // Permission denied or unavailable — stay on the Indore fallback,
-    // don't ask again, don't block anything.
+    // don't ask again, don't block anything. err.code: 1=denied,
+    // 2=unavailable, 3=timeout.
+    const reasons = {1:'permission denied', 2:'position unavailable', 3:'timed out'};
+    setLiveStatus('location failed: ' + (reasons[err.code] || err.message || 'unknown') + ' — showing Indore fallback');
   }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
   // enableHighAccuracy asks the phone to use GPS instead of coarse
   // network/cell-tower positioning (which is what put Ankit ~25km off).
